@@ -1,0 +1,1 @@
+bettering understanding about the fundamental theorems of linear MBA
