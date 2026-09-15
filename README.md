@@ -36,8 +36,8 @@ many distinct identities exist for the same target.
 - Generates **permutation polynomial pairs** `(p, q)` over Z/2^n with
   `p(q(x)) = x`, via the zero ideal of polynomial functions — usable as
   invertible encodings.
-- Verifies every generated identity against 1000 random inputs, plus the full
-  4-point uniform truth table.
+- Verifies every generated identity against 1000 random inputs; the
+  interactive menu also prints the full 4-point uniform truth table.
 
 ## Build
 
@@ -74,7 +74,7 @@ Interactive options:
 | `include/ring.h` | `BinaryRing<T>`: arithmetic over Z/2^n for `uint8/16/32/64`, including modular inverse via Newton iteration seeded from a constexpr 8-bit table |
 | `include/matrix.h` | `Vector<T>` / `Matrix<T>` over a generic ring, plus `DoubleOps` for the floating-point lattice machinery |
 | `include/solver.h`, `src/solver.cpp` | Scalar congruences `a*x = b (mod 2^n)` and `modular_diagonalize`: Smith-style diagonalization over Z/2^n giving the full affine solution lattice of `A*x = b` |
-| `include/lattice.h`, `src/lattice.cpp` | `Lattice` / `AffineLattice`, LLL reduction, and CVP solvers (rounding, nearest-plane, plane enumeration) |
+| `include/lattice.h`, `src/lattice.cpp` | `Lattice` / `AffineLattice`, plus library-only CVP solvers (rounding, nearest-plane, plane enumeration) — not wired into the CLI |
 | `include/bitwise_expr.h` | `BExpr` (purely bitwise expression trees) and `LBExpr` (linear combinations of `BExpr`s — the linear MBA normal form) |
 | `include/expr.h` | `Expr<T>`: mixed arithmetic/bitwise expression trees with parser, evaluator, simplifier, substitution |
 | `include/linear_mba.h`, `src/linear_mba.cpp` | The rewrite engine: `solve_linear_system`, `rewrite`, `obfuscate_expr`, `expr_to_lbexpr` / `lbexpr_to_expr` |
@@ -96,12 +96,12 @@ Interactive options:
 
 ## Known limitations
 
-- The "compile to binary" option in the interactive menu shells out to a
-  hardcoded Windows clang path (`C:/Program Files/LLVM/bin/clang.exe`); it only
-  works on that setup. The generated `.c` file is still written next to the
-  requested output path and can be compiled manually.
-- Verification is randomized testing, not a proof — 1000 samples plus the
-  uniform truth table is strong evidence, not a guarantee.
+- The "compile to binary" option in the interactive menu writes a `.c` file
+  next to the requested output path and invokes `clang` from `PATH` (on
+  Windows it falls back to `C:/Program Files/LLVM/bin/clang.exe`). Output
+  paths containing shell metacharacters are rejected.
+- Verification is randomized testing, not a proof — 1000 samples is strong
+  evidence, not a guarantee.
 - Only two-variable targets are wired into the CLI, though the solver and
   expression machinery are generic over word size and variable count.
 

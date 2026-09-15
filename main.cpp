@@ -13,6 +13,8 @@
 #include <numeric>
 #include <sstream>
 #include <fstream>
+#include <limits>
+#include <cctype>
 
 #include "include/ring.h"
 #include "include/matrix.h"
@@ -113,8 +115,8 @@ static std::vector<TargetFunc> make_targets() {
         {"x - y",  [](u32 a, u32 b) -> u32 { return a - b; }},
         {"x * 2",  [](u32 a, u32  ) -> u32 { return a * 2; }},
         {"x * 3",  [](u32 a, u32  ) -> u32 { return a * 3; }},
-        {"-x",     [](u32 a, u32  ) -> u32 { return static_cast<u32>(-static_cast<i32>(a)); }},
-        {"-y",     [](u32  , u32 b) -> u32 { return static_cast<u32>(-static_cast<i32>(b)); }},
+        {"-x",     [](u32 a, u32  ) -> u32 { return 0u - a; }},
+        {"-y",     [](u32  , u32 b) -> u32 { return 0u - b; }},
         {"x + 1",  [](u32 a, u32  ) -> u32 { return a + 1; }},
         {"x - 1",  [](u32 a, u32  ) -> u32 { return a - 1; }},
     };
@@ -228,7 +230,7 @@ static MBAResult generate_mba(const TargetFunc& target,
             } else {
                 expr << " - ";
                 if (c == -1) expr << basis[i].c_expr;
-                else         expr << (-c) << " * " << basis[i].c_expr;
+                else         expr << (0u - static_cast<u32>(c)) << " * " << basis[i].c_expr;
             }
         }
     }
@@ -280,7 +282,7 @@ static MBAResult generate_obfuscated_mba(const TargetFunc& target,
         bool has_large = false;
         for (auto c : res.coeffs_signed) {
             if (c != 0) ++non_zero;
-            if (std::abs(c) > 100) has_large = true;
+            if (std::abs(static_cast<i64>(c)) > 100) has_large = true;
         }
 
         if (non_zero >= 4 && has_large) return res;
@@ -333,15 +335,60 @@ static bool verify_mba(const MBAResult& res,
     return true;
 }
 
+static bool shell_safe_path(const std::string& p) {
+    if (p.empty()) return false;
+    for (unsigned char ch : p) {
+        if (!std::isalnum(ch) && ch != '.' && ch != '_' && ch != '-' &&
+            ch != '/' && ch != '\\' && ch != ':' && ch != ' ' && ch != '~')
+            return false;
+    }
+    return true;
+}
+
+#ifdef _WIN32
+static std::string find_on_path(const char* name) {
+    const char* path_env = std::getenv("PATH");
+    if (!path_env) return "";
+    std::istringstream iss(path_env);
+    std::string dir;
+    while (std::getline(iss, dir, ';')) {
+        std::string full = dir + "\\" + name;
+        std::ifstream f(full);
+        if (f.good()) return full;
+    }
+    return "";
+}
+#endif
+
+static std::string find_clang() {
+#ifdef _WIN32
+    std::string on_path = find_on_path("clang.exe");
+    if (!on_path.empty()) return on_path;
+    const char* fallback = "C:/Program Files/LLVM/bin/clang.exe";
+    std::ifstream f(fallback);
+    if (f.good()) return fallback;
+    return "";
+#else
+    return "clang";
+#endif
+}
+
 static void compile_to_binary(const std::string& expression,
                               const std::vector<std::string>& vars)
 {
     std::cout << "\n  Compile to binary? (enter output path, or empty to skip): ";
     std::string out_path;
     std::getline(std::cin, out_path);
+    if (out_path.empty()) std::getline(std::cin, out_path);
     if (out_path.empty()) return;
 
     std::string src_path = out_path + ".c";
+
+    if (!shell_safe_path(out_path) || !shell_safe_path(src_path)) {
+        std::cout << "  Path contains characters that are unsafe for a shell command.\n";
+        std::cout << "  Source not written.\n";
+        return;
+    }
 
     {
         std::ofstream ofs(src_path);
@@ -373,7 +420,7 @@ static void compile_to_binary(const std::string& expression,
             ofs << "    uint32_t " << vars[i]
                 << " = (argc > " << (i + 1)
                 << ") ? (uint32_t)strtoul(argv[" << (i + 1) << "], 0, 0)"
-                << " : 0x" << std::hex << (0xDEAD0000u + i) << std::dec << "u;\n";
+                << " : 0u;\n";
         }
         ofs << "    volatile uint32_t result = obfuscated(";
         for (size_t i = 0; i < vars.size(); ++i) {
@@ -385,8 +432,14 @@ static void compile_to_binary(const std::string& expression,
         ofs << "}\n";
     }
 
-    std::string cmd = "\"\"C:/Program Files/LLVM/bin/clang.exe\" -O0 -g -std=c11 -o \""
-                    + out_path + "\" \"" + src_path + "\"\"";
+    std::string clang = find_clang();
+    if (clang.empty()) {
+        std::cout << "  clang not found on PATH; source kept at " << src_path << "\n";
+        return;
+    }
+
+    std::string cmd = "\"" + clang + "\" -O0 -g -std=c11 -o \""
+                    + out_path + "\" \"" + src_path + "\"";
     std::cout << "  Compiling: " << cmd << "\n";
     int rc = std::system(cmd.c_str());
     if (rc == 0) {
@@ -480,15 +533,15 @@ static void option_obfuscate_expr(std::mt19937& rng) {
     std::cout << "  Auxiliary vars [" << cfg.auxiliary_vars << "]: ";
     std::string tmp;
     std::getline(std::cin, tmp);
-    if (!tmp.empty()) cfg.auxiliary_vars = static_cast<size_t>(std::stoi(tmp));
+    if (!tmp.empty()) cfg.auxiliary_vars = parse_size(tmp, cfg.auxiliary_vars);
 
     std::cout << "  Rewrite depth [" << cfg.rewrite_expr_depth << "]: ";
     std::getline(std::cin, tmp);
-    if (!tmp.empty()) cfg.rewrite_expr_depth = static_cast<size_t>(std::stoi(tmp));
+    if (!tmp.empty()) cfg.rewrite_expr_depth = parse_size(tmp, cfg.rewrite_expr_depth);
 
     std::cout << "  Rewrite count [" << cfg.rewrite_expr_count << "]: ";
     std::getline(std::cin, tmp);
-    if (!tmp.empty()) cfg.rewrite_expr_count = static_cast<size_t>(std::stoi(tmp));
+    if (!tmp.empty()) cfg.rewrite_expr_count = parse_size(tmp, cfg.rewrite_expr_count);
 
     std::cout << "\n  Obfuscating...\n";
     obfuscate_expr<u32>(expr, cfg, rng);
@@ -591,7 +644,11 @@ static void run_interactive() {
                   << "  Choice: ";
 
         int choice = 0;
-        if (!(std::cin >> choice)) break;
+        if (!(std::cin >> choice)) {
+            if (std::cin.eof()) break;
+            clear_cin();
+            continue;
+        }
         if (choice == 0) break;
 
         if (choice == 1) {
@@ -601,7 +658,8 @@ static void run_interactive() {
             }
             std::cout << "  Target: ";
             int ti = 0;
-            if (!(std::cin >> ti) || ti < 0 || ti >= static_cast<int>(targets.size())) continue;
+            if (!(std::cin >> ti)) { clear_cin(); continue; }
+            if (ti < 0 || ti >= static_cast<int>(targets.size())) continue;
 
             std::cout << "\n  Available basis functions:\n";
             for (std::size_t i = 0; i < all_basis.size(); ++i) {
@@ -615,6 +673,8 @@ static void run_interactive() {
             while (std::cin >> idx && idx >= 0 && idx < static_cast<int>(all_basis.size())) {
                 selected.push_back(all_basis[static_cast<std::size_t>(idx)]);
             }
+
+            if (std::cin.fail()) clear_cin();
 
             if (selected.size() < 2) {
                 std::cout << "  Need at least 2 basis functions.\n";
@@ -642,7 +702,8 @@ static void run_interactive() {
             }
             std::cout << "  Target: ";
             int ti = 0;
-            if (!(std::cin >> ti) || ti < 0 || ti >= static_cast<int>(targets.size())) continue;
+            if (!(std::cin >> ti)) { clear_cin(); continue; }
+            if (ti < 0 || ti >= static_cast<int>(targets.size())) continue;
 
             std::cout << "\n";
             print_separator();
@@ -661,7 +722,7 @@ static void run_interactive() {
         else if (choice == 3) {
             std::cout << "  Enter constant value (signed 32-bit): ";
             i32 val = 0;
-            if (!(std::cin >> val)) continue;
+            if (!(std::cin >> val)) { clear_cin(); continue; }
 
             std::cout << "\n";
             print_separator();
