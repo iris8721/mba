@@ -6,10 +6,11 @@
 #include <sstream>
 #include <functional>
 #include <cassert>
+#include <cctype>
 #include "ring.h"
 
 struct BExpr {
-    enum Tag { ONES, VAR, AND, OR, XOR, NOT };
+    enum Tag { ONES, ZERO, VAR, AND, OR, XOR, NOT };
 
     Tag tag;
     std::string var_name;
@@ -17,6 +18,7 @@ struct BExpr {
     std::shared_ptr<BExpr> right;
 
     static BExpr ones() { return {ONES, "", nullptr, nullptr}; }
+    static BExpr zero() { return {ZERO, "", nullptr, nullptr}; }
     static BExpr var(const std::string& name) { return {VAR, name, nullptr, nullptr}; }
 
     static BExpr band(BExpr l, BExpr r) {
@@ -37,6 +39,7 @@ struct BExpr {
         using R = BinaryRing<T>;
         switch (tag) {
             case ONES: return R::negative_one();
+            case ZERO: return R::zero();
             case VAR:  return valuation(var_name);
             case AND:  return R::bit_and(left->eval<T>(valuation), right->eval<T>(valuation));
             case OR:   return R::bit_or(left->eval<T>(valuation), right->eval<T>(valuation));
@@ -48,7 +51,7 @@ struct BExpr {
 
     void vars(std::set<std::string>& out) const {
         switch (tag) {
-            case ONES: break;
+            case ONES: case ZERO: break;
             case VAR: out.insert(var_name); break;
             case AND: case OR: case XOR:
                 left->vars(out);
@@ -68,7 +71,7 @@ struct BExpr {
 
     uint32_t complexity() const {
         switch (tag) {
-            case ONES: case VAR: return 1;
+            case ONES: case ZERO: case VAR: return 1;
             case AND: case OR: case XOR: return left->complexity() + right->complexity() + 1;
             case NOT: return left->complexity() + 1;
         }
@@ -78,7 +81,7 @@ struct BExpr {
     bool operator==(const BExpr& o) const {
         if (tag != o.tag) return false;
         switch (tag) {
-            case ONES: return true;
+            case ONES: case ZERO: return true;
             case VAR: return var_name == o.var_name;
             case AND: case OR: case XOR:
                 return *left == *o.left && *right == *o.right;
@@ -92,7 +95,7 @@ struct BExpr {
     bool operator<(const BExpr& o) const {
         if (tag != o.tag) return tag < o.tag;
         switch (tag) {
-            case ONES: return false;
+            case ONES: case ZERO: return false;
             case VAR: return var_name < o.var_name;
             case AND: case OR: case XOR:
                 if (*left != *o.left) return *left < *o.left;
@@ -106,12 +109,13 @@ struct BExpr {
     std::string to_string() const {
         switch (tag) {
             case ONES: return "(-1)";
+            case ZERO: return "0";
             case VAR: return var_name;
             case AND: return "(" + left->to_string() + " & " + right->to_string() + ")";
             case OR:  return "(" + left->to_string() + " | " + right->to_string() + ")";
             case XOR: return "(" + left->to_string() + " ^ " + right->to_string() + ")";
             case NOT: {
-                if (left->tag == VAR || left->tag == ONES)
+                if (left->tag == VAR || left->tag == ONES || left->tag == ZERO)
                     return "~" + left->to_string();
                 return "~(" + left->to_string() + ")";
             }
@@ -137,6 +141,9 @@ private:
             ++pos;
             e = parse_impl(s, pos, 0);
             if (pos < s.size() && s[pos] == ')') ++pos;
+        } else if (c == '-' && pos + 1 < s.size() && s[pos + 1] == '1') {
+            pos += 2;
+            e = ones();
         } else if (c == '~' || c == '!') {
             ++pos;
             e = bnot(parse_impl(s, pos, 15));
@@ -149,6 +156,9 @@ private:
         } else if (c == '1') {
             ++pos;
             e = ones();
+        } else if (c == '0') {
+            ++pos;
+            e = zero();
         }
 
         while (pos < s.size()) {
@@ -242,7 +252,7 @@ struct LBExpr {
                     first = false;
                 } else {
                     if (sv >= 0) os << " + " << sv;
-                    else os << " - " << (-sv);
+                    else os << " - " << -static_cast<uint64_t>(sv);
                 }
             } else {
                 int64_t sv = R::to_signed(c);
@@ -259,7 +269,7 @@ struct LBExpr {
                     } else {
                         os << " - ";
                         if (sv == -1) os << e.to_string();
-                        else os << (-sv) << "*" << e.to_string();
+                        else os << -static_cast<uint64_t>(sv) << "*" << e.to_string();
                     }
                 }
             }

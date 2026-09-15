@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <limits>
+#include <string>
 #include "ring.h"
 
 template<typename T>
@@ -267,7 +269,7 @@ struct Matrix {
             std::cout << "  [";
             for (size_t j = 0; j < cols_; ++j) {
                 if (j > 0) std::cout << ", ";
-                std::cout << data[i * cols_ + j];
+                std::cout << +data[i * cols_ + j];
             }
             std::cout << "]\n";
         }

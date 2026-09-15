@@ -6,6 +6,7 @@
 #include <sstream>
 #include <functional>
 #include <cassert>
+#include <cctype>
 #include "ring.h"
 
 template<typename T>
@@ -165,8 +166,8 @@ struct ExprOp {
                 return std::to_string(sv);
             }
             case VAR: return var_name;
-            case ADD: return left->to_string() + " + " + right->to_string();
-            case SUB: return left->to_string() + " - " + right->paren_string(5);
+            case ADD: return left->paren_string(5) + " + " + right->paren_string(5);
+            case SUB: return left->paren_string(5) + " - " + right->paren_string(6);
             case MUL: return left->paren_string(6) + " * " + right->paren_string(6);
             case NEG: return "-" + left->paren_string(15);
             case AND: return left->paren_string(3) + " & " + right->paren_string(3);

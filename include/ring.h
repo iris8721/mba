@@ -8,6 +8,8 @@
 #include <sstream>
 #include <iostream>
 #include <algorithm>
+#include <cctype>
+#include <cassert>
 
 namespace detail {
     constexpr uint8_t compute_mod_inv_u8(uint8_t e) {
@@ -93,7 +95,7 @@ struct BinaryRing {
     }
 
     static T inverse(T e) {
-        if (!is_odd(e)) return 0;
+        assert(is_odd(e));
 
         T x = static_cast<T>(detail::MOD_INV_TABLE.data[static_cast<uint8_t>(e & 0xFF)]);
         T two = T(2);

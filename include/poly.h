@@ -3,6 +3,8 @@
 #include <string>
 #include <sstream>
 #include <cassert>
+#include <cctype>
+#include <algorithm>
 #include <random>
 #include "ring.h"
 
@@ -154,9 +156,9 @@ struct Poly {
             if (R::is_zero(coeffs[i])) continue;
             if (!first) os << " + ";
             if (i == 0) {
-                os << coeffs[i];
+                os << +coeffs[i];
             } else {
-                if (!R::is_one(coeffs[i])) os << coeffs[i];
+                if (!R::is_one(coeffs[i])) os << +coeffs[i];
                 os << var;
                 if (i > 1) os << "^" << i;
             }
@@ -226,7 +228,7 @@ struct Poly {
             }
 
             if (exp >= c.size()) c.resize(exp + 1, R::zero());
-            c[exp] = coeff;
+            c[exp] = R::add(c[exp], coeff);
         }
 
         return Poly(std::move(c)).truncated();
