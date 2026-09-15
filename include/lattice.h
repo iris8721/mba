@@ -86,12 +86,6 @@ struct AffineLattice {
 };
 
 template<typename T>
-void lll_reduce(Matrix<T>& basis, double delta = 0.75);
-
-template<typename T>
-void size_reduce(Matrix<T>& basis);
-
-template<typename T>
 Vector<T> cvp_rounding(const Matrix<T>& basis, const Vector<T>& target);
 
 template<typename T>

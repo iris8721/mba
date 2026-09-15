@@ -49,7 +49,7 @@ AffineLattice<T> solve_linear_system(
 {
     using R = BinaryRing<T>;
 
-    assert(vars.size() < 20);
+    if (vars.size() >= 20) return AffineLattice<T>::empty(ops.size());
 
     size_t num_rows = size_t(1) << vars.size();
     size_t num_cols = ops.size();

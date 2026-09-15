@@ -22,7 +22,7 @@ static Vector<double> to_double_vector(const Vector<T>& v) {
 
 template<typename T>
 static T from_double(double d) {
-    return static_cast<T>(std::round(d));
+    return static_cast<T>(static_cast<int64_t>(std::round(d)));
 }
 
 static Matrix<double> gram_schmidt(Matrix<double> a) {
@@ -116,67 +116,6 @@ static std::optional<Vector<double>> solve_linear_double(
 }
 
 template<typename T>
-void size_reduce(Matrix<T>& basis) {
-    using R = BinaryRing<T>;
-    size_t n = basis.num_rows();
-
-    for (size_t i = 0; i < n; ++i) {
-        for (size_t j = 0; j < i; ++j) {
-            T dot = R::zero();
-            for (size_t k = 0; k < basis.num_cols(); ++k)
-                dot = R::add(dot, R::mul(basis(i, k), basis(j, k)));
-
-            T nsq = R::zero();
-            for (size_t k = 0; k < basis.num_cols(); ++k)
-                nsq = R::add(nsq, R::mul(basis(j, k), basis(j, k)));
-
-            T q = R::rounded_div(dot, nsq);
-            if (R::is_zero(q)) continue;
-
-            q = R::neg(q);
-            for (size_t k = 0; k < basis.num_cols(); ++k)
-                basis(i, k) = R::add(basis(i, k), R::mul(q, basis(j, k)));
-        }
-    }
-}
-
-template<typename T>
-void lll_reduce(Matrix<T>& basis, double delta) {
-    using R = BinaryRing<T>;
-    size_t n = basis.num_rows();
-    if (n <= 1) return;
-
-    bool did_swap = true;
-    while (did_swap) {
-        size_reduce(basis);
-
-        did_swap = false;
-        for (size_t i = 0; i + 1 < n; ++i) {
-            double b_norm_sqr = 0.0;
-            double c_norm_sqr = 0.0;
-            double bc_dot = 0.0;
-
-            for (size_t k = 0; k < basis.num_cols(); ++k) {
-                double bk = static_cast<double>(basis(i, k));
-                double ck = static_cast<double>(basis(i + 1, k));
-                b_norm_sqr += bk * bk;
-                c_norm_sqr += ck * ck;
-                bc_dot += bk * ck;
-            }
-
-            double q = bc_dot / b_norm_sqr;
-            double rhs = b_norm_sqr * (delta - q * q);
-
-            if (c_norm_sqr < rhs) {
-                basis.swap_rows(i, i + 1);
-                did_swap = true;
-                break;
-            }
-        }
-    }
-}
-
-template<typename T>
 Vector<T> cvp_rounding(const Matrix<T>& basis, const Vector<T>& target) {
     auto af = to_double_matrix(basis);
     auto bf = to_double_vector(target);
@@ -239,6 +178,7 @@ Vector<T> cvp_nearest_plane(const Matrix<T>& basis, const Vector<T>& target) {
             dot += ofk * qik;
             nsq += qik * qik;
         }
+        if (nsq == 0.0) continue;
         double c_double = dot / nsq;
         T c = R::neg(from_double<T>(c_double));
 
@@ -332,6 +272,8 @@ template<typename T>
 std::optional<Vector<T>> cvp_planes(const Matrix<T>& basis, const Vector<T>& target,
                                      double rad_sqr)
 {
+    if (basis.num_rows() == 0) return std::nullopt;
+
     auto bf = to_double_matrix(basis);
     auto tf = to_double_vector(target);
 
@@ -357,15 +299,6 @@ std::optional<Vector<T>> cvp_planes(const Matrix<T>& basis, const Vector<T>& tar
     return coeffs;
 }
 
-template void size_reduce<uint8_t>(Matrix<uint8_t>&);
-template void size_reduce<uint16_t>(Matrix<uint16_t>&);
-template void size_reduce<uint32_t>(Matrix<uint32_t>&);
-template void size_reduce<uint64_t>(Matrix<uint64_t>&);
-
-template void lll_reduce<uint8_t>(Matrix<uint8_t>&, double);
-template void lll_reduce<uint16_t>(Matrix<uint16_t>&, double);
-template void lll_reduce<uint32_t>(Matrix<uint32_t>&, double);
-template void lll_reduce<uint64_t>(Matrix<uint64_t>&, double);
 
 template Vector<uint8_t> cvp_rounding<uint8_t>(const Matrix<uint8_t>&, const Vector<uint8_t>&);
 template Vector<uint16_t> cvp_rounding<uint16_t>(const Matrix<uint16_t>&, const Vector<uint16_t>&);
