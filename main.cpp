@@ -37,6 +37,39 @@ static i32 to_signed(u64 v) {
     return static_cast<i32>(u);
 }
 
+static size_t parse_size(const std::string& s, size_t fallback) {
+    if (s.empty()) return fallback;
+    size_t v = 0;
+    for (char ch : s) {
+        if (!std::isdigit(static_cast<unsigned char>(ch))) return fallback;
+        v = v * 10 + static_cast<size_t>(ch - '0');
+    }
+    return v;
+}
+
+static void clear_cin() {
+    std::cin.clear();
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+}
+
+template<typename T>
+static void print_perm_pair(std::mt19937& rng, size_t degree) {
+    auto zi = ZeroIdeal<T>::init();
+    auto pair = perm_pair<T>(rng, zi, degree);
+    if (!pair) {
+        std::cout << "  Failed to compute an inverse.\n";
+        return;
+    }
+    const auto& [p, q] = *pair;
+    std::cout << "  p(x) = " << p.to_string() << "\n";
+    std::cout << "  q(x) = " << q.to_string() << "\n";
+
+    auto comp = compose(p, q, zi);
+    simplify_poly(comp, zi);
+    std::cout << "  p(q(x)) = " << comp.to_string()
+              << (comp.is_id() ? "  [identity - PASS]" : "  [FAIL]") << "\n";
+}
+
 struct BasisFunc {
     std::string                    name;
     std::string                    c_expr;
@@ -517,46 +550,22 @@ static void option_perm_poly_pair(std::mt19937& rng) {
     std::string tmp;
     std::getline(std::cin, tmp);
     if (tmp.empty()) std::getline(std::cin, tmp);
-    int bw = tmp.empty() ? 1 : std::stoi(tmp);
+    int bw = static_cast<int>(parse_size(tmp, 1));
 
     std::cout << "  Polynomial degree [3]: ";
     std::getline(std::cin, tmp);
-    size_t degree = tmp.empty() ? 3 : static_cast<size_t>(std::stoi(tmp));
+    size_t degree = parse_size(tmp, 3);
     if (degree < 1) degree = 1;
 
     std::cout << "\n  Computing...\n";
     print_separator();
 
     if (bw == 2) {
-        auto zi = ZeroIdeal<uint16_t>::init();
-        auto [p, q] = perm_pair<uint16_t>(rng, zi, degree);
-        std::cout << "  p(x) = " << p.to_string() << "\n";
-        std::cout << "  q(x) = " << q.to_string() << "\n";
-
-        auto comp = compose(p, q, zi);
-        simplify_poly(comp, zi);
-        std::cout << "  p(q(x)) = " << comp.to_string()
-                  << (comp.is_id() ? "  [identity - PASS]" : "  [FAIL]") << "\n";
+        print_perm_pair<uint16_t>(rng, degree);
     } else if (bw == 3) {
-        auto zi = ZeroIdeal<uint32_t>::init();
-        auto [p, q] = perm_pair<uint32_t>(rng, zi, degree);
-        std::cout << "  p(x) = " << p.to_string() << "\n";
-        std::cout << "  q(x) = " << q.to_string() << "\n";
-
-        auto comp = compose(p, q, zi);
-        simplify_poly(comp, zi);
-        std::cout << "  p(q(x)) = " << comp.to_string()
-                  << (comp.is_id() ? "  [identity - PASS]" : "  [FAIL]") << "\n";
+        print_perm_pair<uint32_t>(rng, degree);
     } else {
-        auto zi = ZeroIdeal<uint8_t>::init();
-        auto [p, q] = perm_pair<uint8_t>(rng, zi, degree);
-        std::cout << "  p(x) = " << p.to_string() << "\n";
-        std::cout << "  q(x) = " << q.to_string() << "\n";
-
-        auto comp = compose(p, q, zi);
-        simplify_poly(comp, zi);
-        std::cout << "  p(q(x)) = " << comp.to_string()
-                  << (comp.is_id() ? "  [identity - PASS]" : "  [FAIL]") << "\n";
+        print_perm_pair<uint8_t>(rng, degree);
     }
 
     print_separator();
@@ -730,14 +739,7 @@ int main(int argc, char** argv) {
         print_separator();
 
         std::cout << "\n  Permutation polynomial pair (8-bit, degree 3):\n";
-        auto zi8 = ZeroIdeal<uint8_t>::init();
-        auto [p8, q8] = perm_pair<uint8_t>(rng, zi8, 3);
-        std::cout << "  p(x) = " << p8.to_string() << "\n";
-        std::cout << "  q(x) = " << q8.to_string() << "\n";
-        auto comp8 = compose(p8, q8, zi8);
-        simplify_poly(comp8, zi8);
-        std::cout << "  p(q(x)) = " << comp8.to_string()
-                  << (comp8.is_id() ? "  [PASS]" : "  [FAIL]") << "\n";
+        print_perm_pair<uint8_t>(rng, 3);
 
         print_separator('=');
         return 0;

@@ -6,6 +6,7 @@
 #include <vector>
 #include <random>
 #include <cassert>
+#include <optional>
 
 template<typename T>
 struct ZeroIdeal {
@@ -30,10 +31,10 @@ template<typename T>
 void reduce_poly(Poly<T>& p, const ZeroIdeal<T>& zi);
 
 template<typename T>
-Poly<T> compute_inverse(const Poly<T>& f, const ZeroIdeal<T>& zi);
+std::optional<Poly<T>> compute_inverse(const Poly<T>& f, const ZeroIdeal<T>& zi);
 
 template<typename T>
-Poly<T> compute_inverse_interpolation(const Poly<T>& f, const ZeroIdeal<T>& zi);
+std::optional<Poly<T>> compute_inverse_interpolation(const Poly<T>& f, const ZeroIdeal<T>& zi);
 
 template<typename T>
-std::pair<Poly<T>, Poly<T>> perm_pair(std::mt19937& rng, const ZeroIdeal<T>& zi, size_t degree);
+std::optional<std::pair<Poly<T>, Poly<T>>> perm_pair(std::mt19937& rng, const ZeroIdeal<T>& zi, size_t degree);

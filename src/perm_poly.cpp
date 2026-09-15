@@ -51,7 +51,7 @@ bool is_perm_poly(const Poly<T>& f) {
 template<typename T>
 Poly<T> random_perm_poly(std::mt19937& rng, size_t degree) {
     using R = BinaryRing<T>;
-    assert(degree >= 1);
+    if (degree < 1) return Poly<T>::zero();
 
     std::vector<T> p(degree + 1);
     for (auto& c : p) c = R::random(rng);
@@ -142,9 +142,9 @@ Poly<T> compose(const Poly<T>& p, const Poly<T>& q, const ZeroIdeal<T>& zi) {
 }
 
 template<typename T>
-Poly<T> compute_inverse(const Poly<T>& f, const ZeroIdeal<T>& zi) {
+std::optional<Poly<T>> compute_inverse(const Poly<T>& f, const ZeroIdeal<T>& zi) {
     using R = BinaryRing<T>;
-    assert(is_perm_poly(f));
+    if (!is_perm_poly(f)) return std::nullopt;
 
     Poly<T> p = f;
     simplify_poly(p, zi);
@@ -158,6 +158,7 @@ Poly<T> compute_inverse(const Poly<T>& f, const ZeroIdeal<T>& zi) {
 
         if (comp.is_id()) return q;
 
+        if (comp.len() < 2) comp.coeffs.resize(2, R::zero());
         comp.coeffs[1] = R::dec(comp.coeffs[1]);
 
         Poly<T> qd = q.derivative();
@@ -166,14 +167,13 @@ Poly<T> compute_inverse(const Poly<T>& f, const ZeroIdeal<T>& zi) {
         simplify_poly(q, zi);
     }
 
-    assert(false && "Failed to compute inverse");
-    return q;
+    return std::nullopt;
 }
 
 template<typename T>
-Poly<T> compute_inverse_interpolation(const Poly<T>& f, const ZeroIdeal<T>& zi) {
+std::optional<Poly<T>> compute_inverse_interpolation(const Poly<T>& f, const ZeroIdeal<T>& zi) {
     using R = BinaryRing<T>;
-    assert(is_perm_poly(f));
+    if (!is_perm_poly(f)) return std::nullopt;
 
     size_t n = zi.generators.back().len();
 
@@ -192,18 +192,20 @@ Poly<T> compute_inverse_interpolation(const Poly<T>& f, const ZeroIdeal<T>& zi) 
     }
 
     auto lat = solve_via_modular_diagonalize<T>(std::move(A), std::move(b));
+    if (lat.is_empty()) return std::nullopt;
+
     Poly<T> result(std::vector<T>(lat.offset.begin(), lat.offset.end()));
     simplify_poly(result, zi);
     return result;
 }
 
 template<typename T>
-std::pair<Poly<T>, Poly<T>> perm_pair(std::mt19937& rng, const ZeroIdeal<T>& zi, size_t degree) {
-    assert(degree >= 1);
+std::optional<std::pair<Poly<T>, Poly<T>>> perm_pair(std::mt19937& rng, const ZeroIdeal<T>& zi, size_t degree) {
+    if (degree < 1) return std::nullopt;
     Poly<T> p = random_perm_poly<T>(rng, degree);
-    assert(is_perm_poly(p));
-    Poly<T> q = compute_inverse(p, zi);
-    return {p, q};
+    auto q = compute_inverse(p, zi);
+    if (!q) return std::nullopt;
+    return std::make_pair(std::move(p), std::move(*q));
 }
 
 #define INSTANTIATE_PERM_POLY(T) \
@@ -213,9 +215,9 @@ std::pair<Poly<T>, Poly<T>> perm_pair(std::mt19937& rng, const ZeroIdeal<T>& zi,
     template Poly<T> compose<T>(const Poly<T>&, const Poly<T>&, const ZeroIdeal<T>&); \
     template void simplify_poly<T>(Poly<T>&, const ZeroIdeal<T>&); \
     template void reduce_poly<T>(Poly<T>&, const ZeroIdeal<T>&); \
-    template Poly<T> compute_inverse<T>(const Poly<T>&, const ZeroIdeal<T>&); \
-    template Poly<T> compute_inverse_interpolation<T>(const Poly<T>&, const ZeroIdeal<T>&); \
-    template std::pair<Poly<T>, Poly<T>> perm_pair<T>(std::mt19937&, const ZeroIdeal<T>&, size_t);
+    template std::optional<Poly<T>> compute_inverse<T>(const Poly<T>&, const ZeroIdeal<T>&); \
+    template std::optional<Poly<T>> compute_inverse_interpolation<T>(const Poly<T>&, const ZeroIdeal<T>&); \
+    template std::optional<std::pair<Poly<T>, Poly<T>>> perm_pair<T>(std::mt19937&, const ZeroIdeal<T>&, size_t);
 
 INSTANTIATE_PERM_POLY(uint8_t)
 INSTANTIATE_PERM_POLY(uint16_t)
