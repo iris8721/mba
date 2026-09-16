@@ -24,3 +24,8 @@ target_include_directories(mba_core PUBLIC include)
 
 add_executable(mba main.cpp)
 target_link_libraries(mba PRIVATE mba_core)
+
+enable_testing()
+add_executable(mba_tests tests/test_mba.cpp)
+target_link_libraries(mba_tests PRIVATE mba_core)
+add_test(NAME mba_tests COMMAND mba_tests)

@@ -25,6 +25,7 @@
 #include "include/linear_mba.h"
 #include "include/poly.h"
 #include "include/perm_poly.h"
+#include "include/nonlinear.h"
 
 using u32 = uint32_t;
 using u64 = uint64_t;
@@ -652,8 +653,25 @@ static void option_obfuscate_expr(std::mt19937& rng) {
     std::getline(std::cin, tmp);
     if (!tmp.empty()) cfg.rewrite_expr_count = parse_size(tmp, cfg.rewrite_expr_count);
 
+    std::cout << "  Method:\n"
+              << "    [1] linear\n"
+              << "    [2] nonlinear (permutation polynomial wrap)\n"
+              << "  Choice [1]: ";
+    std::getline(std::cin, tmp);
+    bool nonlinear = (parse_size(tmp, 1) == 2);
+
     std::cout << "\n  Obfuscating...\n";
-    obfuscate_expr<u32>(expr, cfg, rng);
+    if (nonlinear) {
+        auto wrapped = obfuscate_nonlinear<u32>(expr, cfg, rng);
+        if (wrapped) {
+            expr = *wrapped;
+        } else {
+            std::cout << "  Permutation pair generation failed; using linear path.\n";
+            obfuscate_expr<u32>(expr, cfg, rng);
+        }
+    } else {
+        obfuscate_expr<u32>(expr, cfg, rng);
+    }
     ExprOp<u32>::simplify(expr);
 
     std::cout << "\n";
@@ -733,6 +751,82 @@ static void option_perm_poly_pair(std::mt19937& rng) {
     print_separator();
 }
 
+// Reduce an obfuscated expression to a small-coefficient linear MBA identity
+// over the standard basis. Non-bitwise subtrees ride along as _sub_ variables
+// and are substituted back afterwards.
+static int run_simplify(const std::string& line, std::mt19937& rng) {
+    auto expr = ExprOp<u32>::parse(line);
+    std::cout << "  Parsed: " << expr->to_string() << "\n";
+
+    auto extracted = expr_to_lbexpr<u32>(expr);
+    if (!extracted) {
+        std::cout << "  Expression has no linear MBA part; nothing to simplify.\n";
+        return 1;
+    }
+
+    size_t needed = 0;
+    for (const auto& v : expr->vars()) {
+        auto it = std::find(VAR_NAMES.begin(), VAR_NAMES.end(), v);
+        if (it == VAR_NAMES.end()) {
+            std::cout << "  Unknown variable '" << v
+                      << "' (allowed: x, y, z, w).\n";
+            return 1;
+        }
+        needed = std::max(needed, static_cast<size_t>(it - VAR_NAMES.begin()) + 1);
+    }
+    size_t nvars = std::max<size_t>(2, needed);
+
+    std::vector<LBExpr<u32>> ops;
+    ops.push_back(LBExpr<u32>::from_bexpr(BExpr::ones()));
+    for (const auto& bf : make_basis(nvars))
+        ops.push_back(LBExpr<u32>::from_bexpr(BExpr::parse(bf.name)));
+    for (const auto& [name, sub] : extracted->substitutions)
+        ops.push_back(LBExpr<u32>::from_bexpr(BExpr::var(name)));
+
+    std::set<std::string> var_set = extracted->lbexpr.vars();
+    for (const auto& op : ops) {
+        auto v = op.vars();
+        var_set.insert(v.begin(), v.end());
+    }
+    std::vector<std::string> vars(var_set.begin(), var_set.end());
+
+    auto reduced = simplify<u32>(extracted->lbexpr, ops, vars);
+    if (!reduced) {
+        std::cout << "  No linear representation over the standard basis.\n";
+        return 1;
+    }
+
+    Expr<u32> out = lbexpr_to_expr<u32>(*reduced);
+    for (const auto& [name, sub] : extracted->substitutions)
+        ExprOp<u32>::substitute(out, name, sub);
+    ExprOp<u32>::simplify(out);
+
+    std::cout << "  Simplified: " << out->to_string() << "\n";
+
+    std::uniform_int_distribution<u32> dist;
+    bool pass = true;
+    for (int t = 0; t < 1000 && pass; ++t) {
+        Valuation<u32> val;
+        for (const auto& v : vars) val.set(v, dist(rng));
+        if (expr->eval(val.as_fn()) != out->eval(val.as_fn())) pass = false;
+    }
+    std::cout << "  Verification (1000 random tests): " << (pass ? "PASSED" : "FAILED") << "\n";
+    return pass ? 0 : 1;
+}
+
+static void option_simplify(std::mt19937& rng) {
+    std::cout << "\n  Enter an obfuscated MBA expression to simplify:\n  > ";
+    std::string line;
+    std::getline(std::cin, line);
+    if (line.empty()) std::getline(std::cin, line);
+    if (line.empty()) { std::cout << "  No input.\n"; return; }
+
+    std::cout << "\n";
+    print_separator();
+    run_simplify(line, rng);
+    print_separator();
+}
+
 static size_t prompt_nvars() {
     std::cout << "  Variables (2 or 3) [2]: ";
     std::string tmp;
@@ -756,6 +850,7 @@ static void run_interactive(std::mt19937& rng) {
                   << "  [4] Generate all targets (obfuscated)\n"
                   << "  [5] Obfuscate an expression (expression tree)\n"
                   << "  [6] Generate permutation polynomial pair\n"
+                  << "  [7] Simplify an obfuscated MBA expression\n"
                   << "  [0] Exit\n\n"
                   << "  Choice: ";
 
@@ -890,6 +985,9 @@ static void run_interactive(std::mt19937& rng) {
         else if (choice == 6) {
             option_perm_poly_pair(rng);
         }
+        else if (choice == 7) {
+            option_simplify(rng);
+        }
     }
 }
 
@@ -992,6 +1090,7 @@ static void print_usage(const char* prog) {
     std::cout << "Usage: " << prog << " [options]\n"
               << "  --demo            run the self-verifying demo\n"
               << "  --target EXPR     generate and verify one identity for EXPR, then exit\n"
+              << "  --simplify EXPR   reduce an obfuscated MBA expression, then exit\n"
               << "  --vars N          variable count for --target (1-4; x, y, z, w)\n"
               << "  --seed N          seed the RNG for reproducible output\n"
               << "  --hex             print coefficients as hex instead of signed decimal\n"
@@ -1005,6 +1104,7 @@ int main(int argc, char** argv) {
     bool vars_given = false;
     size_t nvars = 2;
     std::string target_str;
+    std::string simplify_str;
     std::mt19937 rng(static_cast<unsigned>(std::time(nullptr)));
 
     for (int i = 1; i < argc; ++i) {
@@ -1025,6 +1125,10 @@ int main(int argc, char** argv) {
             const char* v = need_value("--target");
             if (!v) return 2;
             target_str = v;
+        } else if (arg == "--simplify") {
+            const char* v = need_value("--simplify");
+            if (!v) return 2;
+            simplify_str = v;
         } else if (arg == "--vars") {
             const char* v = need_value("--vars");
             if (!v) return 2;
@@ -1050,6 +1154,9 @@ int main(int argc, char** argv) {
 
     if (!target_str.empty()) {
         return run_target(target_str, nvars, vars_given, rng, hex);
+    }
+    if (!simplify_str.empty()) {
+        return run_simplify(simplify_str, rng);
     }
     if (vars_given) {
         std::cerr << "--vars only applies together with --target.\n";
