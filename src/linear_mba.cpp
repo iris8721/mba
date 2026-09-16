@@ -134,6 +134,51 @@ std::optional<LBExpr<T>> rewrite(
     return collect_solution(solution, ops);
 }
 
+// Coefficients live in Z/2^n, so "size" wraps: c and -c are the same distance
+// from 0, and a coefficient just under 2^n is small, not large. Measure each
+// coefficient as min(c, -c) and sum.
+template<typename T>
+static long double wrapped_norm(const Vector<T>& v) {
+    using R = BinaryRing<T>;
+    long double total = 0.0;
+    for (size_t i = 0; i < v.dim(); ++i) {
+        T c = v[i];
+        total += static_cast<long double>(std::min(c, R::neg(c)));
+    }
+    return total;
+}
+
+template<typename T>
+std::optional<LBExpr<T>> simplify(
+    const LBExpr<T>& expr,
+    const std::vector<LBExpr<T>>& ops,
+    const std::vector<std::string>& vars)
+{
+    using R = BinaryRing<T>;
+
+    auto lat = solve_linear_system(expr, ops, vars);
+    if (lat.is_empty()) return std::nullopt;
+
+    Vector<T> best = lat.offset;
+
+    // Nearest-plane runs in doubles over Z, which has no wraparound: a kernel
+    // vector with entries near 2^n looks long to it even though it is short
+    // mod 2^n, so this is only an approximation of the true modular CVP.
+    if (lat.lattice.rank() > 0) {
+        Vector<T> target = lat.offset.neg(R{});
+        Vector<T> point = cvp_nearest_plane(lat.lattice.basis, target);
+
+        Vector<T> candidate = lat.offset;
+        for (size_t i = 0; i < candidate.dim(); ++i)
+            candidate[i] = R::add(candidate[i], point[i]);
+
+        if (wrapped_norm(candidate) < wrapped_norm(best))
+            best = std::move(candidate);
+    }
+
+    return collect_solution(best, ops);
+}
+
 BExpr random_bool_expr(const std::vector<std::string>& vars, size_t max_depth, std::mt19937& rng) {
     assert(!vars.empty());
 
@@ -315,6 +360,7 @@ void obfuscate_expr(Expr<T>& e, const ObfuscationConfig& cfg, std::mt19937& rng)
     template AffineLattice<T> solve_linear_system<T>(const LBExpr<T>&, const std::vector<LBExpr<T>>&, const std::vector<std::string>&); \
     template LBExpr<T> collect_solution<T>(const Vector<T>&, const std::vector<LBExpr<T>>&); \
     template std::optional<LBExpr<T>> rewrite<T>(const LBExpr<T>&, const std::vector<LBExpr<T>>&, std::mt19937*); \
+    template std::optional<LBExpr<T>> simplify<T>(const LBExpr<T>&, const std::vector<LBExpr<T>>&, const std::vector<std::string>&); \
     template void obfuscate_expr<T>(Expr<T>&, const ObfuscationConfig&, std::mt19937&); \
     template std::optional<ExtractionResult<T>> expr_to_lbexpr<T>(const Expr<T>&); \
     template Expr<T> lbexpr_to_expr<T>(const LBExpr<T>&); \

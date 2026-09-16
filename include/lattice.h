@@ -86,12 +86,5 @@ struct AffineLattice {
 };
 
 template<typename T>
-Vector<T> cvp_rounding(const Matrix<T>& basis, const Vector<T>& target);
-
-template<typename T>
 Vector<T> cvp_nearest_plane(const Matrix<T>& basis, const Vector<T>& target);
-
-template<typename T>
-std::optional<Vector<T>> cvp_planes(const Matrix<T>& basis, const Vector<T>& target,
-                                     double rad_sqr = -1.0);
 

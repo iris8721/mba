@@ -67,6 +67,10 @@ std::optional<LBExpr<T>> rewrite(
     const std::vector<LBExpr<T>>& ops,
     std::mt19937* rng = nullptr);
 
+// Find the smallest-coefficient identity for expr over ops (deobfuscation direction).
+template<typename T>
+std::optional<LBExpr<T>> simplify(const LBExpr<T>& expr, const std::vector<LBExpr<T>>& ops, const std::vector<std::string>& vars);
+
 struct ObfuscationConfig {
     size_t auxiliary_vars = 2;
     size_t rewrite_expr_depth = 3;
