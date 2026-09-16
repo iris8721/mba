@@ -18,6 +18,7 @@ add_library(mba_core STATIC
     src/perm_poly.cpp
     src/poly.cpp
     src/solver.cpp
+    src/nonlinear.cpp
 )
 target_include_directories(mba_core PUBLIC include)
 
