@@ -58,6 +58,21 @@ cmake --build build
 ./build/mba          # interactive menu
 ```
 
+Flags:
+
+| Flag | Effect |
+|---|---|
+| `--demo` | Run the self-verifying demo and exit |
+| `--target EXPR` | Generate one obfuscated identity for `EXPR`, verify it, print it, and exit 0 on success / 1 on failure |
+| `--vars N` | Variable count for `--target` (1-4, named `x`, `y`, `z`, `w`). Defaults to the variables used in the expression, minimum 2 |
+| `--seed N` | Seed the RNG; without it everything is time-seeded. Two runs with the same seed produce identical output |
+| `--hex` | Print coefficients as `0x........` hex instead of signed decimal |
+| `-h`, `--help` | Show usage |
+
+```sh
+./build/mba --target 'x + y' --vars 3 --hex --seed 1
+```
+
 Interactive options:
 
 1. Generate an MBA identity with a hand-picked basis
@@ -66,6 +81,29 @@ Interactive options:
 4. Generate obfuscated identities for all built-in targets
 5. Obfuscate a parsed expression tree
 6. Generate a permutation polynomial pair
+
+Options 1, 2, and 4 first ask for a variable count (2 or 3); the target list
+grows accordingly (`x + y + z`, `x ^ y ^ z`, ... for 3 variables).
+
+## Expression grammar
+
+`--target` and interactive option 5 share the same parser. An expression is:
+
+```
+expr     := or_expr
+or_expr  := xor_expr  ('|' xor_expr)*
+xor_expr := and_expr  ('^' and_expr)*
+and_expr := add_expr  ('&' add_expr)*
+add_expr := mul_expr  (('+' | '-') mul_expr)*
+mul_expr := unary     ('*' unary)*
+unary    := '~' unary | '!' unary | '-' unary | primary
+primary  := '(' expr ')' | ident | integer
+```
+
+`ident` is `[A-Za-z][A-Za-z0-9_]*` (for `--target`, only `x`, `y`, `z`, `w`
+are meaningful) and `integer` is a decimal constant taken mod 2^32. `~`/`!`
+is bitwise not, `-` is unary minus. Precedence follows C: `|` lowest, then
+`^`, `&`, `+`/`-`, `*`, then unary operators. Whitespace is ignored.
 
 ## Layout
 
@@ -80,7 +118,7 @@ Interactive options:
 | `include/linear_mba.h`, `src/linear_mba.cpp` | The rewrite engine: `solve_linear_system`, `rewrite`, `obfuscate_expr`, `expr_to_lbexpr` / `lbexpr_to_expr` |
 | `include/poly.h`, `src/poly.cpp` | `Poly<T>`: polynomials over Z/2^n (eval, compose, derivative, parse/print) |
 | `include/perm_poly.h`, `src/perm_poly.cpp` | Permutation polynomials: zero-ideal construction, `is_perm_poly`, composition/inversion, `perm_pair` |
-| `main.cpp` | CLI driver: `--demo` mode and the interactive menu |
+| `main.cpp` | CLI driver: `--demo`, `--target`/`--vars`/`--seed`/`--hex` flags, and the interactive menu |
 
 ## How it works
 
@@ -102,8 +140,12 @@ Interactive options:
   paths containing shell metacharacters are rejected.
 - Verification is randomized testing, not a proof — 1000 samples is strong
   evidence, not a guarantee.
-- Only two-variable targets are wired into the CLI, though the solver and
-  expression machinery are generic over word size and variable count.
+- The interactive menu supports 2- and 3-variable targets; `--target` accepts
+  up to 4 (`x`, `y`, `z`, `w`). The solver and expression machinery are
+  generic over word size and variable count beyond that.
+- `--target` finds a linear identity over the sampled basis; a non-linear
+  target (e.g. `x * y`) may still produce a candidate that fails the random
+  verification, in which case the exit code is 1.
 
 ## References
 

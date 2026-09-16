@@ -73,62 +73,146 @@ static void print_perm_pair(std::mt19937& rng, size_t degree) {
 }
 
 struct BasisFunc {
-    std::string                    name;
-    std::string                    c_expr;
-    std::function<u32(u32, u32)>   fn;
+    std::string                                 name;
+    std::string                                 c_expr;
+    std::function<u32(const std::vector<u32>&)> fn;
 };
 
-static std::vector<BasisFunc> make_basis_2var() {
-    return {
-        {"x & y",      "(x & y)",      [](u32 a, u32 b) -> u32 { return a & b; }},
-        {"x | y",      "(x | y)",      [](u32 a, u32 b) -> u32 { return a | b; }},
-        {"x ^ y",      "(x ^ y)",      [](u32 a, u32 b) -> u32 { return a ^ b; }},
-        {"~(x & y)",   "(~(x & y))",   [](u32 a, u32 b) -> u32 { return ~(a & b); }},
-        {"~(x | y)",   "(~(x | y))",   [](u32 a, u32 b) -> u32 { return ~(a | b); }},
-        {"~(x ^ y)",   "(~(x ^ y))",   [](u32 a, u32 b) -> u32 { return ~(a ^ b); }},
-        {"~x & y",     "(~x & y)",     [](u32 a, u32 b) -> u32 { return ~a & b; }},
-        {"x & ~y",     "(x & ~y)",     [](u32 a, u32 b) -> u32 { return a & ~b; }},
-        {"~x | y",     "(~x | y)",     [](u32 a, u32 b) -> u32 { return ~a | b; }},
-        {"x | ~y",     "(x | ~y)",     [](u32 a, u32 b) -> u32 { return a | ~b; }},
-        {"~x",         "(~x)",         [](u32 a, u32  ) -> u32 { return ~a; }},
-        {"~y",         "(~y)",         [](u32  , u32 b) -> u32 { return ~b; }},
-        {"x",          "(x)",          [](u32 a, u32  ) -> u32 { return a; }},
-        {"y",          "(y)",          [](u32  , u32 b) -> u32 { return b; }},
-    };
+static const std::vector<std::string> VAR_NAMES = {"x", "y", "z", "w"};
+static constexpr size_t MAX_VARS = 4;
+
+static std::vector<std::string> var_names(size_t nvars) {
+    return {VAR_NAMES.begin(), VAR_NAMES.begin() + static_cast<std::ptrdiff_t>(nvars)};
 }
 
-static std::vector<BasisFunc> make_all_basis_2var() {
-    auto basis = make_basis_2var();
-    basis.push_back({"0",  "((uint32_t)0)", [](u32, u32) -> u32 { return 0; }});
-    basis.push_back({"-1", "(~(uint32_t)0)",[](u32, u32) -> u32 { return ALL_ONES; }});
+// calls f(idx) once per s-element subset idx of {0..n-1}, in sorted order
+template<typename F>
+static void for_each_subset(size_t n, size_t s, F&& f) {
+    std::vector<size_t> idx;
+    std::function<void(size_t)> go = [&](size_t start) {
+        if (idx.size() == s) { f(idx); return; }
+        for (size_t i = start; i < n; ++i) {
+            idx.push_back(i);
+            go(i + 1);
+            idx.pop_back();
+        }
+    };
+    go(0);
+}
+
+static std::string join_names(const std::vector<size_t>& idx, const char* op) {
+    std::string out;
+    for (size_t k = 0; k < idx.size(); ++k) {
+        if (k) out += op;
+        out += VAR_NAMES[idx[k]];
+    }
+    return out;
+}
+
+static std::vector<BasisFunc> make_basis(size_t nvars) {
+    std::vector<BasisFunc> basis;
+    auto push = [&](const std::string& name,
+                    std::function<u32(const std::vector<u32>&)> fn) {
+        basis.push_back({name, "(" + name + ")", std::move(fn)});
+    };
+
+    // bitwise ops over every variable subset of size >= 2
+    for (size_t s = 2; s <= nvars; ++s) {
+        for_each_subset(nvars, s, [&](const std::vector<size_t>& idx) {
+            push(join_names(idx, " & "), [idx](const std::vector<u32>& v) -> u32 {
+                u32 r = ALL_ONES;
+                for (auto i : idx) r &= v[i];
+                return r;
+            });
+            push(join_names(idx, " | "), [idx](const std::vector<u32>& v) -> u32 {
+                u32 r = 0;
+                for (auto i : idx) r |= v[i];
+                return r;
+            });
+            push(join_names(idx, " ^ "), [idx](const std::vector<u32>& v) -> u32 {
+                u32 r = 0;
+                for (auto i : idx) r ^= v[i];
+                return r;
+            });
+            push("~(" + join_names(idx, " & ") + ")", [idx](const std::vector<u32>& v) -> u32 {
+                u32 r = ALL_ONES;
+                for (auto i : idx) r &= v[i];
+                return ~r;
+            });
+            push("~(" + join_names(idx, " | ") + ")", [idx](const std::vector<u32>& v) -> u32 {
+                u32 r = 0;
+                for (auto i : idx) r |= v[i];
+                return ~r;
+            });
+            push("~(" + join_names(idx, " ^ ") + ")", [idx](const std::vector<u32>& v) -> u32 {
+                u32 r = 0;
+                for (auto i : idx) r ^= v[i];
+                return ~r;
+            });
+        });
+    }
+
+    // negated pairs for each unordered variable pair
+    for_each_subset(nvars, 2, [&](const std::vector<size_t>& idx) {
+        size_t i = idx[0], j = idx[1];
+        const std::string& a = VAR_NAMES[i];
+        const std::string& b = VAR_NAMES[j];
+        push("~" + a + " & " + b, [i, j](const std::vector<u32>& v) -> u32 { return ~v[i] & v[j]; });
+        push(a + " & ~" + b,      [i, j](const std::vector<u32>& v) -> u32 { return v[i] & ~v[j]; });
+        push("~" + a + " | " + b, [i, j](const std::vector<u32>& v) -> u32 { return ~v[i] | v[j]; });
+        push(a + " | ~" + b,      [i, j](const std::vector<u32>& v) -> u32 { return v[i] | ~v[j]; });
+    });
+
+    for (size_t i = 0; i < nvars; ++i)
+        push("~" + VAR_NAMES[i], [i](const std::vector<u32>& v) -> u32 { return ~v[i]; });
+    for (size_t i = 0; i < nvars; ++i)
+        push(VAR_NAMES[i], [i](const std::vector<u32>& v) -> u32 { return v[i]; });
+
+    return basis;
+}
+
+static std::vector<BasisFunc> make_all_basis(size_t nvars) {
+    auto basis = make_basis(nvars);
+    basis.push_back({"0",  "((uint32_t)0)", [](const std::vector<u32>&) -> u32 { return 0; }});
+    basis.push_back({"-1", "(~(uint32_t)0)",[](const std::vector<u32>&) -> u32 { return ALL_ONES; }});
     return basis;
 }
 
 struct TargetFunc {
-    std::string                    name;
-    std::function<u32(u32, u32)>   fn;
+    std::string                                 name;
+    std::function<u32(const std::vector<u32>&)> fn;
 };
 
-static std::vector<TargetFunc> make_targets() {
-    return {
-        {"x + y",  [](u32 a, u32 b) -> u32 { return a + b; }},
-        {"x - y",  [](u32 a, u32 b) -> u32 { return a - b; }},
-        {"x * 2",  [](u32 a, u32  ) -> u32 { return a * 2; }},
-        {"x * 3",  [](u32 a, u32  ) -> u32 { return a * 3; }},
-        {"-x",     [](u32 a, u32  ) -> u32 { return 0u - a; }},
-        {"-y",     [](u32  , u32 b) -> u32 { return 0u - b; }},
-        {"x + 1",  [](u32 a, u32  ) -> u32 { return a + 1; }},
-        {"x - 1",  [](u32 a, u32  ) -> u32 { return a - 1; }},
+static std::vector<TargetFunc> make_targets(size_t nvars) {
+    std::vector<TargetFunc> targets = {
+        {"x + y",  [](const std::vector<u32>& v) -> u32 { return v[0] + v[1]; }},
+        {"x - y",  [](const std::vector<u32>& v) -> u32 { return v[0] - v[1]; }},
+        {"x * 2",  [](const std::vector<u32>& v) -> u32 { return v[0] * 2; }},
+        {"x * 3",  [](const std::vector<u32>& v) -> u32 { return v[0] * 3; }},
+        {"-x",     [](const std::vector<u32>& v) -> u32 { return 0u - v[0]; }},
+        {"-y",     [](const std::vector<u32>& v) -> u32 { return 0u - v[1]; }},
+        {"x + 1",  [](const std::vector<u32>& v) -> u32 { return v[0] + 1; }},
+        {"x - 1",  [](const std::vector<u32>& v) -> u32 { return v[0] - 1; }},
     };
+    if (nvars >= 3) {
+        targets.push_back({"x + y + z",   [](const std::vector<u32>& v) -> u32 { return v[0] + v[1] + v[2]; }});
+        targets.push_back({"x - y - z",   [](const std::vector<u32>& v) -> u32 { return v[0] - v[1] - v[2]; }});
+        targets.push_back({"x + y - z",   [](const std::vector<u32>& v) -> u32 { return v[0] + v[1] - v[2]; }});
+        targets.push_back({"x ^ y ^ z",   [](const std::vector<u32>& v) -> u32 { return v[0] ^ v[1] ^ v[2]; }});
+        targets.push_back({"z + (x & y)", [](const std::vector<u32>& v) -> u32 { return v[2] + (v[0] & v[1]); }});
+    }
+    return targets;
 }
 
-static constexpr u32 UNIFORM_INPUTS[4][2] = {
-    {0,        0       },
-    {0,        ALL_ONES},
-    {ALL_ONES, 0       },
-    {ALL_ONES, ALL_ONES},
-};
-static constexpr int NUM_INPUTS = 4;
+// all {0, -1}^n assignments; variable c takes bit (nvars-1-c) of the row index
+static std::vector<std::vector<u32>> uniform_inputs(size_t nvars) {
+    size_t rows = size_t(1) << nvars;
+    std::vector<std::vector<u32>> inputs(rows, std::vector<u32>(nvars));
+    for (size_t r = 0; r < rows; ++r)
+        for (size_t c = 0; c < nvars; ++c)
+            inputs[r][c] = ((r >> (nvars - 1 - c)) & 1) ? ALL_ONES : 0;
+    return inputs;
+}
 
 struct LinearSystem {
     Matrix<u32> A;
@@ -136,18 +220,18 @@ struct LinearSystem {
 };
 
 static LinearSystem build_system(const std::vector<BasisFunc>& basis,
-                                 const TargetFunc& target)
+                                 const TargetFunc& target,
+                                 size_t nvars)
 {
+    auto inputs = uniform_inputs(nvars);
     size_t cols = basis.size();
-    Matrix<u32> A(NUM_INPUTS, cols);
-    Vector<u32> b(NUM_INPUTS);
+    Matrix<u32> A(inputs.size(), cols);
+    Vector<u32> b(inputs.size());
 
-    for (int r = 0; r < NUM_INPUTS; ++r) {
-        u32 x = UNIFORM_INPUTS[r][0];
-        u32 y = UNIFORM_INPUTS[r][1];
-        b[static_cast<size_t>(r)] = target.fn(x, y);
+    for (size_t r = 0; r < inputs.size(); ++r) {
+        b[r] = target.fn(inputs[r]);
         for (size_t c = 0; c < cols; ++c) {
-            A(static_cast<size_t>(r), c) = basis[c].fn(x, y);
+            A(r, c) = basis[c].fn(inputs[r]);
         }
     }
     return {std::move(A), std::move(b)};
@@ -180,8 +264,17 @@ struct MBAResult {
     std::string                error;
 };
 
+static std::string format_coeff(u32 raw, bool hex) {
+    if (!hex) return std::to_string(static_cast<i32>(raw));
+    std::ostringstream os;
+    os << "0x" << std::hex << std::setw(8) << std::setfill('0') << raw;
+    return os.str();
+}
+
 static MBAResult generate_mba(const TargetFunc& target,
-                               const std::vector<BasisFunc>& basis)
+                               const std::vector<BasisFunc>& basis,
+                               size_t nvars,
+                               bool hex = false)
 {
     MBAResult res;
     res.target_name = target.name;
@@ -191,7 +284,7 @@ static MBAResult generate_mba(const TargetFunc& target,
         return res;
     }
 
-    LinearSystem sys = build_system(basis, target);
+    LinearSystem sys = build_system(basis, target, nvars);
 
     Solution sol = solve_modular_system(sys);
     if (!sol.valid) {
@@ -214,23 +307,24 @@ static MBAResult generate_mba(const TargetFunc& target,
     std::ostringstream expr;
     bool first = true;
     for (std::size_t i = 0; i < basis.size(); ++i) {
+        u32 raw = res.coeffs_raw[i];
+        if (raw == 0) continue;
         i32 c = res.coeffs_signed[i];
-        if (c == 0) continue;
 
         if (first) {
             if (c == 1)       expr << basis[i].c_expr;
             else if (c == -1) expr << "-" << basis[i].c_expr;
-            else              expr << c << " * " << basis[i].c_expr;
+            else              expr << format_coeff(raw, hex) << " * " << basis[i].c_expr;
             first = false;
         } else {
             if (c > 0) {
                 expr << " + ";
                 if (c == 1) expr << basis[i].c_expr;
-                else        expr << c << " * " << basis[i].c_expr;
+                else        expr << format_coeff(raw, hex) << " * " << basis[i].c_expr;
             } else {
                 expr << " - ";
                 if (c == -1) expr << basis[i].c_expr;
-                else         expr << (0u - static_cast<u32>(c)) << " * " << basis[i].c_expr;
+                else         expr << format_coeff(0u - raw, hex) << " * " << basis[i].c_expr;
             }
         }
     }
@@ -242,9 +336,15 @@ static MBAResult generate_mba(const TargetFunc& target,
         if (!std::isalnum(static_cast<unsigned char>(ch))) ch = '_';
     }
 
+    std::ostringstream params;
+    for (size_t i = 0; i < nvars; ++i) {
+        if (i) params << ", ";
+        params << "uint32_t " << VAR_NAMES[i];
+    }
+
     std::ostringstream code;
     code << "// MBA expression equivalent to: " << target.name << "\n";
-    code << "uint32_t mba_" << fname << "(uint32_t x, uint32_t y) {\n";
+    code << "uint32_t mba_" << fname << "(" << params.str() << ") {\n";
     code << "    return " << res.expression << ";\n";
     code << "}\n";
     res.c_code = code.str();
@@ -254,18 +354,21 @@ static MBAResult generate_mba(const TargetFunc& target,
 }
 
 static MBAResult generate_obfuscated_mba(const TargetFunc& target,
-                                          std::mt19937& rng)
+                                          std::mt19937& rng,
+                                          size_t nvars,
+                                          bool hex = false)
 {
-    auto all_basis = make_all_basis_2var();
+    auto all_basis = make_all_basis(nvars);
 
     MBAResult best;
 
-    for (int attempt = 0; attempt < 20; ++attempt) {
+    int attempts = (nvars >= 3) ? 60 : 20;
+    for (int attempt = 0; attempt < attempts; ++attempt) {
         std::vector<std::size_t> indices(all_basis.size());
         std::iota(indices.begin(), indices.end(), std::size_t{0});
         std::shuffle(indices.begin(), indices.end(), rng);
 
-        auto count = static_cast<std::size_t>(6 + static_cast<int>(rng() % 7));
+        auto count = static_cast<std::size_t>(4 + 2 * nvars + static_cast<int>(rng() % (2 * nvars + 1)));
         if (count > all_basis.size()) count = all_basis.size();
 
         std::vector<std::size_t> used(indices.begin(), indices.begin() + static_cast<std::ptrdiff_t>(count));
@@ -275,7 +378,7 @@ static MBAResult generate_obfuscated_mba(const TargetFunc& target,
         subset.reserve(count);
         for (auto idx : used) subset.push_back(all_basis[idx]);
 
-        MBAResult res = generate_mba(target, subset);
+        MBAResult res = generate_mba(target, subset, nvars, hex);
         if (!res.valid) continue;
 
         int non_zero  = 0;
@@ -292,16 +395,18 @@ static MBAResult generate_obfuscated_mba(const TargetFunc& target,
     return best;
 }
 
-static MBAResult obfuscate_constant(u32 constant_val, std::mt19937& rng) {
+static MBAResult obfuscate_constant(u32 constant_val, std::mt19937& rng,
+                                    size_t nvars, bool hex = false) {
     TargetFunc target;
     target.name = std::to_string(static_cast<i32>(constant_val));
-    target.fn   = [constant_val](u32, u32) -> u32 { return constant_val; };
-    return generate_obfuscated_mba(target, rng);
+    target.fn   = [constant_val](const std::vector<u32>&) -> u32 { return constant_val; };
+    return generate_obfuscated_mba(target, rng, nvars, hex);
 }
 
 static bool verify_mba(const MBAResult& res,
                         const TargetFunc& target,
                         const std::vector<BasisFunc>& all_basis,
+                        size_t nvars,
                         int num_tests = 1000)
 {
     if (!res.valid) return false;
@@ -310,24 +415,26 @@ static bool verify_mba(const MBAResult& res,
     std::uniform_int_distribution<u32> dist;
 
     for (int t = 0; t < num_tests; ++t) {
-        u32 x = dist(rng_v);
-        u32 y = dist(rng_v);
-        u32 expected = target.fn(x, y);
+        std::vector<u32> inputs(nvars);
+        for (auto& v : inputs) v = dist(rng_v);
+        u32 expected = target.fn(inputs);
 
         u64 actual = 0;
         for (std::size_t i = 0; i < res.basis_names.size(); ++i) {
             if (res.coeffs_raw[i] == 0) continue;
             for (const auto& bf : all_basis) {
                 if (bf.name == res.basis_names[i]) {
-                    actual = (actual + static_cast<u64>(res.coeffs_raw[i]) * static_cast<u64>(bf.fn(x, y))) % MOD;
+                    actual = (actual + static_cast<u64>(res.coeffs_raw[i]) * static_cast<u64>(bf.fn(inputs))) % MOD;
                     break;
                 }
             }
         }
 
         if (static_cast<u32>(actual) != expected) {
-            std::cerr << "  FAIL: x=" << x << " y=" << y
-                      << " expected=" << expected
+            std::cerr << "  FAIL:";
+            for (size_t c = 0; c < nvars; ++c)
+                std::cerr << " " << VAR_NAMES[c] << "=" << inputs[c];
+            std::cerr << " expected=" << expected
                       << " got=" << static_cast<u32>(actual) << "\n";
             return false;
         }
@@ -456,36 +563,39 @@ static void print_separator(char ch = '-', int width = 72) {
 
 static void print_truth_table(const MBAResult& res,
                                const TargetFunc& target,
-                               const std::vector<BasisFunc>& all_basis)
+                               const std::vector<BasisFunc>& all_basis,
+                               size_t nvars)
 {
-    std::cout << "\n  Truth Table ({0, -1}^2 inputs - Fundamental Theorem):\n";
-    std::cout << "  " << std::setw(12) << "x"
-              << std::setw(12) << "y"
-              << std::setw(14) << "target"
+    auto inputs = uniform_inputs(nvars);
+
+    std::cout << "\n  Truth Table ({0, -1}^" << nvars
+              << " inputs - Fundamental Theorem):\n  ";
+    for (size_t c = 0; c < nvars; ++c)
+        std::cout << std::setw(12) << VAR_NAMES[c];
+    std::cout << std::setw(14) << "target"
               << std::setw(14) << "MBA"
               << std::setw(8)  << "match" << "\n";
-    std::cout << "  " << std::string(60, '-') << "\n";
+    std::cout << "  " << std::string(12 * nvars + 36, '-') << "\n";
 
-    for (int r = 0; r < NUM_INPUTS; ++r) {
-        u32 x = UNIFORM_INPUTS[r][0];
-        u32 y = UNIFORM_INPUTS[r][1];
-        u32 tgt = target.fn(x, y);
+    for (const auto& in : inputs) {
+        u32 tgt = target.fn(in);
 
         u64 mba = 0;
         for (std::size_t i = 0; i < res.basis_names.size(); ++i) {
             if (res.coeffs_raw[i] == 0) continue;
             for (const auto& bf : all_basis) {
                 if (bf.name == res.basis_names[i]) {
-                    mba = (mba + static_cast<u64>(res.coeffs_raw[i]) * static_cast<u64>(bf.fn(x, y))) % MOD;
+                    mba = (mba + static_cast<u64>(res.coeffs_raw[i]) * static_cast<u64>(bf.fn(in))) % MOD;
                     break;
                 }
             }
         }
 
         bool match = (static_cast<u32>(mba) == tgt);
-        std::cout << "  " << std::setw(12) << static_cast<i32>(x)
-                  << std::setw(12) << static_cast<i32>(y)
-                  << std::setw(14) << static_cast<i32>(tgt)
+        std::cout << "  ";
+        for (size_t c = 0; c < nvars; ++c)
+            std::cout << std::setw(12) << static_cast<i32>(in[c]);
+        std::cout << std::setw(14) << static_cast<i32>(tgt)
                   << std::setw(14) << to_signed(mba)
                   << std::setw(8)  << (match ? "OK" : "FAIL") << "\n";
     }
@@ -496,7 +606,7 @@ static void print_result_short(const MBAResult& res) {
     std::cout << "  " << res.target_name << "  =  " << res.expression << "\n";
 }
 
-static void print_result(const MBAResult& res) {
+static void print_result(const MBAResult& res, bool hex = false) {
     if (!res.valid) { std::cout << "  Error: " << res.error << "\n"; return; }
 
     std::cout << "  Target:     " << res.target_name << "\n";
@@ -506,9 +616,8 @@ static void print_result(const MBAResult& res) {
     for (std::size_t i = 0; i < res.basis_names.size(); ++i) {
         if (res.coeffs_signed[i] == 0) continue;
         std::cout << "    " << std::setw(12) << res.basis_names[i]
-                  << "  ->  " << std::setw(12) << res.coeffs_signed[i]
-                  << "  (0x" << std::hex << std::setw(8) << std::setfill('0')
-                  << res.coeffs_raw[i] << std::dec << std::setfill(' ') << ")\n";
+                  << "  ->  " << std::setw(12) << format_coeff(res.coeffs_raw[i], hex)
+                  << "\n";
     }
 
     std::cout << "\n  C/C++ code:\n";
@@ -624,11 +733,18 @@ static void option_perm_poly_pair(std::mt19937& rng) {
     print_separator();
 }
 
-static void run_interactive() {
-    auto all_basis = make_all_basis_2var();
-    auto targets   = make_targets();
-    std::mt19937 rng(static_cast<unsigned>(std::time(nullptr)));
+static size_t prompt_nvars() {
+    std::cout << "  Variables (2 or 3) [2]: ";
+    std::string tmp;
+    std::getline(std::cin, tmp);
+    if (tmp.empty()) std::getline(std::cin, tmp);
+    size_t nvars = parse_size(tmp, 2);
+    if (nvars < 2) nvars = 2;
+    if (nvars > 3) nvars = 3;
+    return nvars;
+}
 
+static void run_interactive(std::mt19937& rng) {
     while (true) {
         std::cout << "\n";
         print_separator('=');
@@ -652,6 +768,10 @@ static void run_interactive() {
         if (choice == 0) break;
 
         if (choice == 1) {
+            size_t nvars = prompt_nvars();
+            auto all_basis = make_all_basis(nvars);
+            auto targets   = make_targets(nvars);
+
             std::cout << "\n  Available targets:\n";
             for (std::size_t i = 0; i < targets.size(); ++i) {
                 std::cout << "    [" << i << "] " << targets[i].name << "\n";
@@ -683,19 +803,23 @@ static void run_interactive() {
 
             std::cout << "\n";
             print_separator();
-            MBAResult res = generate_mba(targets[static_cast<std::size_t>(ti)], selected);
+            MBAResult res = generate_mba(targets[static_cast<std::size_t>(ti)], selected, nvars);
             print_result(res);
 
             if (res.valid) {
-                bool ok = verify_mba(res, targets[static_cast<std::size_t>(ti)], all_basis);
+                bool ok = verify_mba(res, targets[static_cast<std::size_t>(ti)], all_basis, nvars);
                 std::cout << "\n  Verification (1000 random tests): "
                           << (ok ? "PASSED" : "FAILED") << "\n";
-                print_truth_table(res, targets[static_cast<std::size_t>(ti)], all_basis);
-                compile_to_binary(res.expression, {"x", "y"});
+                print_truth_table(res, targets[static_cast<std::size_t>(ti)], all_basis, nvars);
+                compile_to_binary(res.expression, var_names(nvars));
             }
             print_separator();
         }
         else if (choice == 2) {
+            size_t nvars = prompt_nvars();
+            auto all_basis = make_all_basis(nvars);
+            auto targets   = make_targets(nvars);
+
             std::cout << "\n  Available targets:\n";
             for (std::size_t i = 0; i < targets.size(); ++i) {
                 std::cout << "    [" << i << "] " << targets[i].name << "\n";
@@ -707,48 +831,54 @@ static void run_interactive() {
 
             std::cout << "\n";
             print_separator();
-            MBAResult res = generate_obfuscated_mba(targets[static_cast<std::size_t>(ti)], rng);
+            MBAResult res = generate_obfuscated_mba(targets[static_cast<std::size_t>(ti)], rng, nvars);
             print_result(res);
 
             if (res.valid) {
-                bool ok = verify_mba(res, targets[static_cast<std::size_t>(ti)], all_basis);
+                bool ok = verify_mba(res, targets[static_cast<std::size_t>(ti)], all_basis, nvars);
                 std::cout << "\n  Verification (1000 random tests): "
                           << (ok ? "PASSED" : "FAILED") << "\n";
-                print_truth_table(res, targets[static_cast<std::size_t>(ti)], all_basis);
-                compile_to_binary(res.expression, {"x", "y"});
+                print_truth_table(res, targets[static_cast<std::size_t>(ti)], all_basis, nvars);
+                compile_to_binary(res.expression, var_names(nvars));
             }
             print_separator();
         }
         else if (choice == 3) {
+            auto all_basis = make_all_basis(2);
+
             std::cout << "  Enter constant value (signed 32-bit): ";
             i32 val = 0;
             if (!(std::cin >> val)) { clear_cin(); continue; }
 
             std::cout << "\n";
             print_separator();
-            MBAResult res = obfuscate_constant(static_cast<u32>(val), rng);
+            MBAResult res = obfuscate_constant(static_cast<u32>(val), rng, 2);
             print_result(res);
 
             if (res.valid) {
                 TargetFunc ct;
                 ct.name = std::to_string(val);
-                ct.fn   = [val](u32, u32) -> u32 { return static_cast<u32>(val); };
-                bool ok = verify_mba(res, ct, all_basis);
+                ct.fn   = [val](const std::vector<u32>&) -> u32 { return static_cast<u32>(val); };
+                bool ok = verify_mba(res, ct, all_basis, 2);
                 std::cout << "\n  Verification (1000 random tests): "
                           << (ok ? "PASSED" : "FAILED") << "\n";
-                print_truth_table(res, ct, all_basis);
-                compile_to_binary(res.expression, {"x", "y"});
+                print_truth_table(res, ct, all_basis, 2);
+                compile_to_binary(res.expression, var_names(2));
             }
             print_separator();
         }
         else if (choice == 4) {
+            size_t nvars = prompt_nvars();
+            auto all_basis = make_all_basis(nvars);
+            auto targets   = make_targets(nvars);
+
             std::cout << "\n";
             for (auto& t : targets) {
                 print_separator();
-                MBAResult res = generate_obfuscated_mba(t, rng);
+                MBAResult res = generate_obfuscated_mba(t, rng, nvars);
                 print_result(res);
                 if (res.valid) {
-                    bool ok = verify_mba(res, t, all_basis);
+                    bool ok = verify_mba(res, t, all_basis, nvars);
                     std::cout << "\n  Verification: " << (ok ? "PASSED" : "FAILED") << "\n";
                 }
             }
@@ -763,49 +893,170 @@ static void run_interactive() {
     }
 }
 
-int main(int argc, char** argv) {
+static int run_demo(std::mt19937& rng, bool hex) {
+    constexpr size_t nvars = 2;
+    auto all_basis = make_all_basis(nvars);
+    auto targets   = make_targets(nvars);
 
-    if (argc > 1 && std::string(argv[1]) == "--demo") {
-        auto all_basis = make_all_basis_2var();
-        auto targets   = make_targets();
-        std::mt19937 rng(12345);
+    std::cout << "\n  Linear MBA Generator -- Demo\n";
+    print_separator('=');
 
-        std::cout << "\n  Linear MBA Generator -- Demo\n";
-        print_separator('=');
-
-        {
-            std::vector<BasisFunc> basis = {all_basis[2], all_basis[0]};
-            MBAResult res = generate_mba(targets[0], basis);
-            std::cout << "  Classic:  x + y  =  " << res.expression << "\n";
-        }
-
-        print_separator();
-
-        std::cout << "  Obfuscated identities:\n\n";
-        for (const auto& t : targets) {
-            MBAResult res = generate_obfuscated_mba(t, rng);
-            bool ok = verify_mba(res, t, all_basis);
-            print_result_short(res);
-            std::cout << "    " << (ok ? "[PASS]" : "[FAIL]") << "\n\n";
-        }
-
-        {
-            MBAResult res = obfuscate_constant(42, rng);
-            TargetFunc ct{"42", [](u32, u32) -> u32 { return 42; }};
-            bool ok = verify_mba(res, ct, all_basis);
-            print_result_short(res);
-            std::cout << "    " << (ok ? "[PASS]" : "[FAIL]") << "\n";
-        }
-
-        print_separator();
-
-        std::cout << "\n  Permutation polynomial pair (8-bit, degree 3):\n";
-        print_perm_pair<uint8_t>(rng, 3);
-
-        print_separator('=');
-        return 0;
+    {
+        std::vector<BasisFunc> basis = {all_basis[2], all_basis[0]};
+        MBAResult res = generate_mba(targets[0], basis, nvars, hex);
+        std::cout << "  Classic:  x + y  =  " << res.expression << "\n";
     }
 
-    run_interactive();
+    print_separator();
+
+    std::cout << "  Obfuscated identities:\n\n";
+    for (const auto& t : targets) {
+        MBAResult res = generate_obfuscated_mba(t, rng, nvars, hex);
+        bool ok = verify_mba(res, t, all_basis, nvars);
+        print_result_short(res);
+        std::cout << "    " << (ok ? "[PASS]" : "[FAIL]") << "\n\n";
+    }
+
+    {
+        MBAResult res = obfuscate_constant(42, rng, nvars, hex);
+        TargetFunc ct{"42", [](const std::vector<u32>&) -> u32 { return 42; }};
+        bool ok = verify_mba(res, ct, all_basis, nvars);
+        print_result_short(res);
+        std::cout << "    " << (ok ? "[PASS]" : "[FAIL]") << "\n";
+    }
+
+    print_separator();
+
+    std::cout << "\n  Permutation polynomial pair (8-bit, degree 3):\n";
+    print_perm_pair<uint8_t>(rng, 3);
+
+    print_separator('=');
+    return 0;
+}
+
+static int run_target(const std::string& target_str, size_t nvars,
+                      bool vars_given, std::mt19937& rng, bool hex) {
+    for (char ch : target_str) {
+        if (std::isspace(static_cast<unsigned char>(ch))) continue;
+        if (!std::isalnum(static_cast<unsigned char>(ch)) &&
+            std::string("~!&|^+-*()_").find(ch) == std::string::npos) {
+            std::cerr << "  Invalid character '" << ch << "' in target expression.\n";
+            return 2;
+        }
+    }
+
+    auto expr = ExprOp<u32>::parse(target_str);
+
+    size_t needed = 0;
+    for (const auto& v : expr->vars()) {
+        auto it = std::find(VAR_NAMES.begin(), VAR_NAMES.end(), v);
+        if (it == VAR_NAMES.end()) {
+            std::cerr << "  Unknown variable '" << v
+                      << "' (allowed: x, y, z, w).\n";
+            return 2;
+        }
+        needed = std::max(needed, static_cast<size_t>(it - VAR_NAMES.begin()) + 1);
+    }
+
+    if (vars_given) {
+        if (nvars < needed) {
+            std::cerr << "  --vars " << nvars << " is too few for '" << target_str
+                      << "' (needs " << needed << ").\n";
+            return 2;
+        }
+    } else {
+        nvars = std::max<size_t>(2, needed);
+    }
+
+    auto all_basis = make_all_basis(nvars);
+
+    TargetFunc target;
+    target.name = target_str;
+    target.fn   = [expr](const std::vector<u32>& v) -> u32 {
+        Valuation<u32> val;
+        for (size_t i = 0; i < v.size(); ++i) val.set(VAR_NAMES[i], v[i]);
+        return expr->eval(val.as_fn());
+    };
+
+    MBAResult res = generate_obfuscated_mba(target, rng, nvars, hex);
+    print_result(res, hex);
+    if (!res.valid) return 1;
+
+    bool ok = verify_mba(res, target, all_basis, nvars);
+    std::cout << "\n  Verification (1000 random tests): "
+              << (ok ? "PASSED" : "FAILED") << "\n";
+    return ok ? 0 : 1;
+}
+
+static void print_usage(const char* prog) {
+    std::cout << "Usage: " << prog << " [options]\n"
+              << "  --demo            run the self-verifying demo\n"
+              << "  --target EXPR     generate and verify one identity for EXPR, then exit\n"
+              << "  --vars N          variable count for --target (1-4; x, y, z, w)\n"
+              << "  --seed N          seed the RNG for reproducible output\n"
+              << "  --hex             print coefficients as hex instead of signed decimal\n"
+              << "  -h, --help        show this help\n"
+              << "With no options an interactive menu starts.\n";
+}
+
+int main(int argc, char** argv) {
+    bool demo = false;
+    bool hex = false;
+    bool vars_given = false;
+    size_t nvars = 2;
+    std::string target_str;
+    std::mt19937 rng(static_cast<unsigned>(std::time(nullptr)));
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        auto need_value = [&](const char* flag) -> const char* {
+            if (i + 1 >= argc) {
+                std::cerr << flag << " requires a value.\n";
+                return nullptr;
+            }
+            return argv[++i];
+        };
+
+        if (arg == "--demo") {
+            demo = true;
+        } else if (arg == "--hex") {
+            hex = true;
+        } else if (arg == "--target") {
+            const char* v = need_value("--target");
+            if (!v) return 2;
+            target_str = v;
+        } else if (arg == "--vars") {
+            const char* v = need_value("--vars");
+            if (!v) return 2;
+            nvars = parse_size(v, 0);
+            if (nvars < 1 || nvars > MAX_VARS) {
+                std::cerr << "--vars must be between 1 and " << MAX_VARS << ".\n";
+                return 2;
+            }
+            vars_given = true;
+        } else if (arg == "--seed") {
+            const char* v = need_value("--seed");
+            if (!v) return 2;
+            rng.seed(static_cast<unsigned>(std::strtoul(v, nullptr, 0)));
+        } else if (arg == "-h" || arg == "--help") {
+            print_usage(argv[0]);
+            return 0;
+        } else {
+            std::cerr << "Unknown option: " << arg << "\n";
+            print_usage(argv[0]);
+            return 2;
+        }
+    }
+
+    if (!target_str.empty()) {
+        return run_target(target_str, nvars, vars_given, rng, hex);
+    }
+    if (vars_given) {
+        std::cerr << "--vars only applies together with --target.\n";
+        return 2;
+    }
+    if (demo) return run_demo(rng, hex);
+
+    run_interactive(rng);
     return 0;
 }
